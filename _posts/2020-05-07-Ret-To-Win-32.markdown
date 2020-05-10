@@ -1,0 +1,128 @@
+---
+layout: post
+title:  "ROPemporium Ret2Win 32-bit Writeup"
+date:   2020-05-07
+---
+
+Once you have gotten a little bit familiar with some of the tools used in pwning problems, [ROPEmporium](https://ropemporium.com/) is a wonderful place to start flexing those pwn-muscles. 
+
+The very first problem, ret2win, requires a simple exploit and a basic understanding of the function stack. 
+
+Let's dive in. 
+
+## Initial Pass-Through
+
+Before tackling a pwn problem head-on, I like to do a bit of a pass-through of the binary to get an idea of what I'm dealing with. 
+
+First, the problem description:
+
+```
+Take the time to read these challenge pages, there aren't any spoilers and they contain important information that could save you some frustration. If you're unfamiliar with ROP tools of the trade then check out the beginner's guide. As it states; you'll feed each binary with a quantity of garbage followed by your ROP chain. In this case there is a magic method we want to call and we'll do so by overwriting a saved return address on the stack. Certainly nothing that could be called a 'chain' by any stretch of the imagination but we've got to start somewhere. We'll do a little RE to confirm some information but nothing serious.
+```
+
+Just from the problem description alone we can figure out at least two things we need to do in order to get our flag to print. 
+
+1. Send some junk
+2. Send a return address to a magic method we want to call 
+
+Now, let's run the binary.
+
+```
+./ret2win32 
+ret2win by ROP Emporium
+32bits
+
+For my first trick, I will attempt to fit 50 bytes of user input into 32 bytes of stack buffer;
+What could possibly go wrong?
+You there madam, may I have your input please? And don't worry about null bytes, we're using fgets!
+
+> aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Segmentation fault
+``` 
+
+Now we also know that the program takes user input, meaning we can do some evil. 
+
+Normally there are other tidbits I would do here, but considering ROPEmporium problems are more "textbook-like" examples of pwn problems, I'll skip those for now.
+
+## Radare Time!
+
+Now that we have done an initial pass-through of the binary, let's fire up radare. 
+
+```
+r2 -Ad ./ret2win32 
+Process with PID 19232 started...
+= attach 19232 19232
+bin.baddr 0x08048000
+Using 0x8048000
+asm.bits 32
+glibc.fc_offset = 0x00148
+Warning: r_bin_file_hash: file exceeds bin.hashlimit
+[x] Analyze all flags starting with sym. and entry0 (aa)
+[x] Analyze function calls (aac)
+[x] Analyze len bytes of instructions for references (aar)
+[x] Check for objc references
+[x] Check for vtables
+[TOFIX: aaft can't run in debugger mode.ions (aaft)
+[x] Type matching analysis for all functions (aaft)
+[x] Propagate noreturn information
+[x] Use -AA or aaaa to perform additional experimental analysis.
+ -- The Hard ROP Cafe
+[0xf7faac70]> 
+```
+
+Once radare is fired up, run the commands **s main** and **Vpp**.
+
+```
+[0xf7f34c70]> s main
+[0x0804857b]> 
+```
+ 
+```
+123: int main (int argc, char **argv, char **envp);                                                                                                                                                                                                                            
+│           ; var int32_t var_4h @ ebp-0x4                                                                                                                                                                                                                                       
+│           ; arg int32_t arg_4h @ esp+0x24                                                                                                                                                                                                                                      
+│           0x0804857b      8d4c2404       lea ecx, [arg_4h]                                                                                                                                                                                                                     
+│           0x0804857f      83e4f0         and esp, 0xfffffff0                                                                                                                                                                                                                   
+│           0x08048582      ff71fc         push dword [ecx - 4]                                                                                                                                                                                                                  
+│           0x08048585      55             push ebp                                                                                                                                                                                                                              
+│           0x08048586      89e5           mov ebp, esp                                                                                                                                                                                                                          
+│           0x08048588      51             push ecx                                                                                                                                                                                                                              
+│           0x08048589      83ec04         sub esp, 4                                                                                                                                                                                                                            
+│           0x0804858c      a164a00408     mov eax, dword [obj.stdout]    ; obj.stdout__GLIBC_2.0                                                                                                                                                                                
+│                                                                      ; [0x804a064:4]=0                                                                                                                                                                                         
+│           0x08048591      6a00           push 0                                                                                                                                                                                                                                
+│           0x08048593      6a02           push 2                      ; 2                                                                                                                                                                                                       
+│           0x08048595      6a00           push 0                                                                                                                                                                                                                                
+│           0x08048597      50             push eax                                                                                                                                                                                                                              
+│           0x08048598      e8b3feffff     call sym.imp.setvbuf        ;[1] ; int setvbuf(FILE*stream, char *buf, int mode, size_t size)                                                                                                                                         
+│           0x0804859d      83c410         add esp, 0x10                                                                                                                                                                                                                         
+│           0x080485a0      a140a00408     mov eax, dword [obj.stderr]    ; obj.stderr__GLIBC_2.0                                                                                                                                                                                
+│                                                                      ; [0x804a040:4]=0                                                                                                                                                                                         
+│           0x080485a5      6a00           push 0                                                                                                                                                                                                                                
+│           0x080485a7      6a02           push 2                      ; 2                                                                                                                                                                                                       
+│           0x080485a9      6a00           push 0                                                                                                                                                                                                                                
+│           0x080485ab      50             push eax                                                                                                                                                                                                                              
+│           0x080485ac      e89ffeffff     call sym.imp.setvbuf        ;[1] ; int setvbuf(FILE*stream, char *buf, int mode, size_t size)                                                                                                                                         
+│           0x080485b1      83c410         add esp, 0x10                                                                                                                                                                                                                         
+│           0x080485b4      83ec0c         sub esp, 0xc                                                                                                                                                                                                                          
+│           0x080485b7      6810870408     push str.ret2win_by_ROP_Emporium    ; 0x8048710 ; "ret2win by ROP Emporium"                                                                                                                                                           
+│           0x080485bc      e85ffeffff     call sym.imp.puts           ;[2] ; int puts(const char *s)                                                                                                                                                                            
+│           0x080485c1      83c410         add esp, 0x10                                                                                                                                                                                                                         
+│           0x080485c4      83ec0c         sub esp, 0xc                                                                                                                                                                                                                          
+│           0x080485c7      6828870408     push str.32bits             ; 0x8048728 ; "32bits\n"                                                                                                                                                                                  
+│           0x080485cc      e84ffeffff     call sym.imp.puts           ;[2] ; int puts(const char *s)                                                                                                                                                                            
+│           0x080485d1      83c410         add esp, 0x10                                                                                                                                                                                                                         
+│           0x080485d4      e81d000000     call sym.pwnme              ;[3]                                                                                                                                                                                                      
+│           0x080485d9      83ec0c         sub esp, 0xc                                                                                                                                                                                                                          
+│           0x080485dc      6830870408     push str.Exiting            ; 0x8048730 ; "\nExiting"                                                                                                                                                                                 
+│           0x080485e1      e83afeffff     call sym.imp.puts           ;[2] ; int puts(const char *s)                                                                                                                                                                            
+│           0x080485e6      83c410         add esp, 0x10                                                                                                                                                                                                                         
+│           0x080485e9      b800000000     mov eax, 0                                                                                                                                                                                                                            
+│           0x080485ee      8b4dfc         mov ecx, dword [var_4h]                                                                                                                                                                                                               
+│           0x080485f1      c9             leave                                                                                                                                                                                                                                 
+│           0x080485f2      8d61fc         lea esp, [ecx - 4]                                                                                                                                                                                                                    
+└           0x080485f5      c3             ret                                                                                                                                                                                                                                   
+            ; CALL XREF from main @ 0x80485d4            
+```
+
+
